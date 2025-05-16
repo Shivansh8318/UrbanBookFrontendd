@@ -16,41 +16,6 @@ import { OtplessModule } from 'otpless-react-native';
 
 const { width, height } = Dimensions.get('window');
 
-/**
- * @typedef {Object} Identity
- * @property {string} identityType
- * @property {string} identityValue
- * @property {string} [name]
- * @property {boolean} [verified]
- */
-
-/**
- * @typedef {Object} UserData
- * @property {string} [token]
- * @property {string} [userId]
- * @property {Identity[]} [identities]
- */
-
-/**
- * @typedef {Object} OtplessResponse
- * @property {UserData} [data]
- * @property {string} [errorMessage]
- */
-
-/**
- * @typedef {Object} VerificationResponse
- * @property {boolean} success
- * @property {string} message
- * @property {string} [user_id]
- * @property {string} [name]
- * @property {string} [identity_type]
- * @property {string} [identity_value]
- * @property {string} [dashboard_route]
- * @property {boolean} [is_new_user]
- * @property {Identity[]} [identities]
- * @property {string} [timestamp]
- */
-
 const AuthScreen = ({ route, navigation }) => {
   const { role = 'Student' } = route.params || {};
   const [loginStatus, setLoginStatus] = useState('');
@@ -74,11 +39,7 @@ const AuthScreen = ({ route, navigation }) => {
       : `${baseUrl}teacher/validate-token/`;
   };
 
-  /**
-   * Verify token with backend
-   * @param {string} token - The token to verify
-   * @returns {Promise<boolean>} Whether verification was successful
-   */
+  
   const verifyTokenWithBackend = async (token) => {
     try {
       const VERIFICATION_URL = getVerificationUrl();
@@ -237,7 +198,7 @@ const AuthScreen = ({ route, navigation }) => {
               ) : (
                 <>
                   <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
-                    <Text style={styles.loginButtonText}>Login with OTPless</Text>
+                    <Text style={styles.loginButtonText}>Login </Text>
                   </TouchableOpacity>
 
                   {loginStatus && (
