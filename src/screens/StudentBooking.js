@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,10 +10,12 @@ import {
   Alert,
   Image,
   Dimensions,
+  Modal,
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Animated, { FadeIn, FadeInUp } from 'react-native-reanimated';
 import ReconnectingWebSocket from 'react-native-reconnecting-websocket';
+import { WebView } from 'react-native-webview';
 
 const { width, height } = Dimensions.get('window');
 const AnimatedTouchableOpacity = Animated.createAnimatedComponent(TouchableOpacity);
@@ -29,11 +31,17 @@ const StudentBooking = ({ route, navigation }) => {
   const [bookingSlotId, setBookingSlotId] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
   const [allSlots, setAllSlots] = useState([]); // Store all future slots for the teacher
+  const [showRazorpay, setShowRazorpay] = useState(false);
+  const [razorpayOptions, setRazorpayOptions] = useState(null);
+  const [selectedBookingForPayment, setSelectedBookingForPayment] = useState(null);
+  const webViewRef = useRef(null);
+  const [processingPayment, setProcessingPayment] = useState(false);
+  const [processingPaymentId, setProcessingPaymentId] = useState(null);
 
   useEffect(() => {
     const setupWebSocket = () => {
       const websocket = new ReconnectingWebSocket(
-        `wss://3caa-110-235-239-151.ngrok-free.app/ws/booking/${userData.user_id}/`
+        `wss://a195-110-235-239-151.ngrok-free.app/ws/booking/${userData.user_id}/`
       );
       setWs(websocket);
 
@@ -101,7 +109,7 @@ const StudentBooking = ({ route, navigation }) => {
   const fetchTeachers = async () => {
     try {
       const response = await fetch(
-        'https://3caa-110-235-239-151.ngrok-free.app/api/teacher/list-teachers/',
+        'https://a195-110-235-239-151.ngrok-free.app/api/teacher/list-teachers/',
         {
           method: 'GET',
           headers: {
@@ -121,7 +129,7 @@ const StudentBooking = ({ route, navigation }) => {
   const fetchAllSlots = async (teacherId) => {
     try {
       const response = await fetch(
-        'https://3caa-110-235-239-151.ngrok-free.app/api/booking/get-teacher-slots/',
+        'https://a195-110-235-239-151.ngrok-free.app/api/booking/get-teacher-slots/',
         {
           method: 'POST',
           headers: {
@@ -152,7 +160,7 @@ const StudentBooking = ({ route, navigation }) => {
   const fetchAvailableSlots = async (teacherId, date) => {
     try {
       const response = await fetch(
-        'https://3caa-110-235-239-151.ngrok-free.app/api/booking/get-teacher-slots/',
+        'https://a195-110-235-239-151.ngrok-free.app/api/booking/get-teacher-slots/',
         {
           method: 'POST',
           headers: {
@@ -183,7 +191,7 @@ const StudentBooking = ({ route, navigation }) => {
   const fetchBookedClasses = async () => {
     try {
       const response = await fetch(
-        'https://3caa-110-235-239-151.ngrok-free.app/api/booking/get-student-bookings/',
+        'https://a195-110-235-239-151.ngrok-free.app/api/booking/get-student-bookings/',
         {
           method: 'POST',
           headers: {
@@ -285,6 +293,211 @@ const StudentBooking = ({ route, navigation }) => {
       </View>
     );
   };
+
+  // Update handlePayment function to use correct URL
+  const handlePayment = async (booking) => {
+    try {
+      setProcessingPayment(true);
+      setProcessingPaymentId(booking.id);
+      setSelectedBookingForPayment(booking);
+      
+      // Create order on backend
+      const response = await fetch(
+        'https://a195-110-235-239-151.ngrok-free.app/api/payment/create-order/',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            booking_id: booking.id,
+            amount: 500, // Fixed amount for now
+            currency: 'INR',
+          }),
+        }
+      );
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create payment order');
+      }
+      
+      const orderData = await response.json();
+      console.log('Payment order created:', orderData);
+      
+      // Configure Razorpay options
+      const options = {
+        key: orderData.key,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: 'Urban Book',
+        description: 'Payment for class booking',
+        order_id: orderData.order_id,
+        prefill: {
+          email: userData.identity_value,
+          name: userData.name || 'Student',
+        },
+        theme: { color: '#9333EA' }
+      };
+      
+      setRazorpayOptions(options);
+      setShowRazorpay(true);
+    } catch (error) {
+      console.error('Error initiating payment:', error);
+      Alert.alert('Error', error.message || 'Failed to initiate payment');
+    } finally {
+      setProcessingPayment(false);
+      setProcessingPaymentId(null);
+    }
+  };
+  
+  // Update handleRazorpayResponse function to use correct URL
+  const handleRazorpayResponse = async (data) => {
+    setShowRazorpay(false);
+    setProcessingPayment(true);
+    
+    try {
+      if (data.razorpay_payment_id) {
+        // Payment successful, verify with backend
+        const response = await fetch(
+          'https://a195-110-235-239-151.ngrok-free.app/api/payment/verify-payment/',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              order_id: data.razorpay_order_id,
+              payment_id: data.razorpay_payment_id,
+              signature: data.razorpay_signature,
+            }),
+          }
+        );
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Payment verification failed');
+        }
+        
+        // Refresh bookings list
+        fetchBookedClasses();
+        Alert.alert('Success', 'Payment completed successfully!');
+      } else if (data.error) {
+        // Payment failed
+        Alert.alert('Payment Failed', data.error.description || 'Payment was unsuccessful');
+      }
+    } catch (error) {
+      console.error('Error verifying payment:', error);
+      Alert.alert('Error', error.message || 'Failed to verify payment');
+    } finally {
+      setProcessingPayment(false);
+      setProcessingPaymentId(null);
+    }
+  };
+  
+  // Generate HTML for Razorpay WebView
+  const generateRazorpayHTML = () => {
+    if (!razorpayOptions) return '';
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Razorpay Payment</title>
+        <style>
+          body { margin: 0; padding: 0; font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #111827; }
+          #payment-button { background-color: #9333EA; color: white; border: none; padding: 15px 30px; border-radius: 8px; font-size: 16px; cursor: pointer; }
+        </style>
+      </head>
+      <body>
+        <button id="payment-button">Pay ₹${parseFloat(razorpayOptions.amount) / 100}</button>
+
+        <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+        <script>
+          const options = ${JSON.stringify(razorpayOptions)};
+          
+          const paymentButton = document.getElementById('payment-button');
+          paymentButton.addEventListener('click', function() {
+            const rzp = new Razorpay(options);
+            
+            rzp.on('payment.success', function(response) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'payment_success',
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_signature: response.razorpay_signature
+              }));
+            });
+            
+            rzp.on('payment.error', function(response) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'payment_error',
+                error: response.error
+              }));
+            });
+            
+            rzp.open();
+          });
+          
+          // Auto-click the button after load
+          setTimeout(() => {
+            paymentButton.click();
+          }, 1000);
+        </script>
+      </body>
+      </html>
+    `;
+  };
+  
+  // Handle WebView messages
+  const handleWebViewMessage = (event) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === 'payment_success') {
+        handleRazorpayResponse({
+          razorpay_payment_id: data.razorpay_payment_id,
+          razorpay_order_id: data.razorpay_order_id,
+          razorpay_signature: data.razorpay_signature
+        });
+      } else if (data.type === 'payment_error') {
+        handleRazorpayResponse({ error: data.error });
+      }
+    } catch (error) {
+      console.error('Error processing WebView message:', error);
+    }
+  };
+
+  // Update renderBookingCard to show Pay Now button regardless of booking status
+  const renderBookingCard = (booking) => (
+    <View style={styles.slotCard}>
+      <View style={styles.bookingInfo}>
+        <Text style={styles.slotTime}>Teacher: {booking.teacher_name}</Text>
+        <Text style={styles.slotTime}>{booking.date} {booking.start_time} - {booking.end_time}</Text>
+        <Text style={[styles.slotStatus, 
+          booking.status === 'confirmed' ? styles.statusConfirmed : 
+          booking.status === 'canceled' ? styles.statusCanceled : styles.statusPending
+        ]}>
+          Status: {booking.status}
+        </Text>
+        {booking.payment_status && (
+          <Text style={styles.paidStatus}>Payment: Completed</Text>
+        )}
+      </View>
+      
+      {!booking.payment_status && (
+        <TouchableOpacity 
+          style={[styles.payButton, processingPaymentId === booking.id && styles.disabledButton]}
+          onPress={() => handlePayment(booking)}
+          disabled={processingPayment}
+        >
+          <Text style={styles.buttonText}>
+            {processingPaymentId === booking.id ? 'Processing...' : 'Pay Now'}
+          </Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 
   return (
     <View style={styles.container}>
@@ -391,13 +604,7 @@ const StudentBooking = ({ route, navigation }) => {
               ) : (
                 <FlatList
                   data={bookedClasses}
-                  renderItem={({ item }) => (
-                    <View style={styles.slotCard}>
-                      <Text style={styles.slotTime}>Teacher: {item.teacher_name}</Text>
-                      <Text style={styles.slotTime}>{item.date} {item.start_time} - {item.end_time}</Text>
-                      <Text style={styles.slotStatus}>Status: {item.status}</Text>
-                    </View>
-                  )}
+                  renderItem={({ item }) => renderBookingCard(item)}
                   keyExtractor={(item) => item.id.toString()}
                   nestedScrollEnabled={true}
                   style={styles.flatListContainer}
@@ -407,6 +614,35 @@ const StudentBooking = ({ route, navigation }) => {
           </ScrollView>
         </SafeAreaView>
       </LinearGradient>
+
+      {/* Razorpay Payment Modal */}
+      {showRazorpay && (
+        <Modal
+          visible={showRazorpay}
+          animationType="slide"
+          transparent={false}
+          onRequestClose={() => {
+            setShowRazorpay(false);
+          }}
+        >
+          <View style={{ flex: 1 }}>
+            <WebView
+              ref={webViewRef}
+              source={{ html: generateRazorpayHTML() }}
+              onMessage={handleWebViewMessage}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              style={{ flex: 1 }}
+            />
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setShowRazorpay(false)}
+            >
+              <Text style={styles.closeButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 };
@@ -486,7 +722,7 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.6)' 
   },
   slotCard: { 
-    padding: 12, 
+    padding: 15, 
     backgroundColor: 'rgba(255, 255, 255, 0.1)', 
     borderRadius: 12, 
     marginBottom: 10, 
@@ -496,6 +732,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.2)',
   },
+  bookingInfo: {
+    flex: 1,
+    flexDirection: 'column',
+  },
   slotTime: { 
     fontSize: 14, 
     color: '#FFFFFF' 
@@ -503,6 +743,12 @@ const styles = StyleSheet.create({
   slotStatus: { 
     fontSize: 14, 
     color: 'rgba(255, 255, 255, 0.6)' 
+  },
+  paidStatus: {
+    fontSize: 14,
+    color: '#34C759',
+    fontWeight: 'bold',
+    marginTop: 4,
   },
   bookButton: { 
     backgroundColor: 'rgba(147, 51, 234, 0.8)', 
@@ -565,6 +811,51 @@ const styles = StyleSheet.create({
   },
   flatListContainer: {
     maxHeight: 250,
+  },
+  payButton: {
+    backgroundColor: '#34C759',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginTop: 10,
+    alignItems: 'center',
+    minWidth: 100,
+    alignSelf: 'flex-end',
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    backgroundColor: '#FF3B30',
+    padding: 10,
+    borderRadius: 8,
+  },
+  closeButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  statusConfirmed: {
+    color: '#34C759',
+  },
+  statusCanceled: {
+    color: '#FF3B30',
+  },
+  statusPending: {
+    color: '#FFCC00',
   },
 });
 

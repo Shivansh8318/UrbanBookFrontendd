@@ -30,7 +30,7 @@ const TeacherBooking = ({ route, navigation }) => {
   const [ws, setWs] = useState(null);
 
   useEffect(() => {
-    const websocket = new ReconnectingWebSocket(`wss://3caa-110-235-239-151.ngrok-free.app/ws/booking/${userData.user_id}/`);
+    const websocket = new ReconnectingWebSocket(`wss://a195-110-235-239-151.ngrok-free.app/ws/booking/${userData.user_id}/`);
     setWs(websocket);
 
     websocket.onopen = () => console.log('WebSocket Connected');
@@ -60,7 +60,7 @@ const TeacherBooking = ({ route, navigation }) => {
 
   const fetchSlots = async () => {
     try {
-      const response = await fetch('https://3caa-110-235-239-151.ngrok-free.app/api/booking/get-teacher-slots/', {
+      const response = await fetch('https://a195-110-235-239-151.ngrok-free.app/api/booking/get-teacher-slots/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacher_id: userData.user_id }),
