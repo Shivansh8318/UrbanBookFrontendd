@@ -33,7 +33,7 @@ const AuthScreen = ({ route, navigation }) => {
 
   
   const getVerificationUrl = () => {
-    const baseUrl = 'https://a195-110-235-239-151.ngrok-free.app/api/';
+    const baseUrl = 'https://3cc0-146-196-34-220.ngrok-free.app/api/';
     return role.toLowerCase() === 'student'
       ? `${baseUrl}student/validate-token/`
       : `${baseUrl}teacher/validate-token/`;

@@ -22,7 +22,7 @@ const TeacherDashboard = ({ route, navigation }) => {
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        const baseUrl = 'https://a195-110-235-239-151.ngrok-free.app/api/';
+        const baseUrl = 'https://3cc0-146-196-34-220.ngrok-free.app/api/';
         const response = await fetch(`${baseUrl}teacher/get-profile/`, {
           method: 'POST',
           headers: {

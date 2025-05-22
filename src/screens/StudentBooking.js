@@ -37,67 +37,136 @@ const StudentBooking = ({ route, navigation }) => {
   const webViewRef = useRef(null);
   const [processingPayment, setProcessingPayment] = useState(false);
   const [processingPaymentId, setProcessingPaymentId] = useState(null);
+  const [showMeeting, setShowMeeting] = useState(false);
+  const meetingURL = 'https://shivansh-videoconf-309.app.100ms.live/meeting/uvr-mzvu-vgd';
 
   useEffect(() => {
     const setupWebSocket = () => {
       const websocket = new ReconnectingWebSocket(
-        `wss://a195-110-235-239-151.ngrok-free.app/ws/booking/${userData.user_id}/`
+        `wss://3cc0-146-196-34-220.ngrok-free.app/ws/booking/${userData.user_id}/`
       );
       setWs(websocket);
 
-      websocket.onopen = () => console.log('WebSocket Connected');
+      websocket.onopen = () => {
+        console.log('WebSocket Connected');
+        // Refresh booked classes on connect
+        fetchBookedClasses();
+      };
+      
       websocket.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        if (data.type === 'booking_update') {
-          const bookedSlotId = data.booking.slot_id;
-          // Immediately remove the booked slot from availableSlots and allSlots
-          setAvailableSlots((prevSlots) => prevSlots.filter((slot) => slot.id !== bookedSlotId));
-          setAllSlots((prevSlots) => prevSlots.filter((slot) => slot.id !== bookedSlotId));
-          // Update booked classes and reset booking state
-          setBookingSlotId(null);
-          fetchBookedClasses();
-          // Refetch slots to ensure consistency
-          if (selectedTeacher) {
-            fetchAllSlots(selectedTeacher.user_id);
-            if (selectedDate) {
-              fetchAvailableSlots(selectedTeacher.user_id, selectedDate);
-            }
-          }
-        } else if (data.type === 'slot_update') {
-          // Handle new slot addition
-          const newSlot = data.slot;
-          if (selectedTeacher && newSlot.teacher_id === selectedTeacher.user_id && !newSlot.is_booked) {
-            // Update allSlots for calendar highlights
-            setAllSlots((prevSlots) => {
-              if (prevSlots.some((slot) => slot.id === newSlot.id)) {
-                return prevSlots;
+        try {
+          console.log('WebSocket Message Received:', e.data);
+          const data = JSON.parse(e.data);
+          
+          if (data.type === 'booking_update') {
+            const bookedSlotId = data.booking.slot_id;
+            console.log('Booking update for slot:', bookedSlotId);
+            
+            // Immediately remove the booked slot from availableSlots and allSlots
+            setAvailableSlots((prevSlots) => prevSlots.filter((slot) => slot.id !== bookedSlotId));
+            setAllSlots((prevSlots) => prevSlots.filter((slot) => slot.id !== bookedSlotId));
+            
+            // Update booked classes and reset booking state
+            setBookingSlotId(null);
+            fetchBookedClasses();
+            
+            // Refetch slots to ensure consistency
+            if (selectedTeacher) {
+              fetchAllSlots(selectedTeacher.user_id);
+              if (selectedDate) {
+                fetchAvailableSlots(selectedTeacher.user_id, selectedDate);
               }
-              return [...prevSlots, newSlot];
-            });
-            // Update availableSlots only if the slot matches the selected date
-            if (selectedDate && newSlot.date === selectedDate.toISOString().split('T')[0]) {
-              setAvailableSlots((prevSlots) => {
-                if (prevSlots.some((slot) => slot.id === newSlot.id)) {
-                  return prevSlots;
-                }
-                return [...prevSlots, newSlot];
-              });
             }
+          } else if (data.type === 'slot_update') {
+            // Handle new slot or deleted slot
+            console.log('Slot update received:', data);
+            
+            if (data.action === 'added') {
+              // Handle new slot addition
+              const newSlot = data.slot;
+              if (selectedTeacher && newSlot.teacher_id === selectedTeacher.user_id && !newSlot.is_booked) {
+                // Update allSlots for calendar highlights
+                setAllSlots((prevSlots) => {
+                  if (prevSlots.some((slot) => slot.id === newSlot.id)) {
+                    return prevSlots;
+                  }
+                  const updatedSlots = [...prevSlots, newSlot];
+                  return updatedSlots.sort((a, b) => {
+                    const dateComparison = new Date(a.date) - new Date(b.date);
+                    if (dateComparison !== 0) return dateComparison;
+                    return a.start_time.localeCompare(b.start_time);
+                  });
+                });
+                
+                // Update availableSlots only if the slot matches the selected date
+                if (selectedDate && newSlot.date === selectedDate.toISOString().split('T')[0]) {
+                  setAvailableSlots((prevSlots) => {
+                    if (prevSlots.some((slot) => slot.id === newSlot.id)) {
+                      return prevSlots;
+                    }
+                    const updatedSlots = [...prevSlots, newSlot];
+                    return updatedSlots.sort((a, b) => a.start_time.localeCompare(b.start_time));
+                  });
+                }
+              }
+            } else if (data.action === 'deleted' && data.slot_id) {
+              // Remove the deleted slot
+              setAllSlots(prevSlots => prevSlots.filter(slot => slot.id !== data.slot_id));
+              setAvailableSlots(prevSlots => prevSlots.filter(slot => slot.id !== data.slot_id));
+            }
+          } else if (data.type === 'slots_count') {
+            console.log('Slots count from server:', data.count);
+            
+            // If we have a teacher selected, check if our count matches
+            if (selectedTeacher && 
+                data.teacher_id === selectedTeacher.user_id && 
+                data.count !== allSlots.length) {
+              console.log('Slot count mismatch, refetching...');
+              fetchAllSlots(selectedTeacher.user_id);
+              if (selectedDate) {
+                fetchAvailableSlots(selectedTeacher.user_id, selectedDate);
+              }
+            }
+          } else if (data.type === 'error') {
+            setBookingSlotId(null);
+            Alert.alert('Booking Error', data.message);
           }
-        } else if (data.type === 'error') {
-          setBookingSlotId(null);
-          Alert.alert('Booking Error', data.message);
+        } catch (error) {
+          console.error('Error processing WebSocket message:', error.message);
         }
       };
+      
       websocket.onerror = (e) => {
         console.error('WebSocket Error:', e);
         Alert.alert('Connection Error', 'Failed to connect to real-time updates. Some features may not work.');
       };
+      
       websocket.onclose = () => console.log('WebSocket Disconnected');
 
-      return () => websocket.close();
+      return websocket;
     };
-    setupWebSocket();
+    
+    // Initialize WebSocket connection
+    const websocket = setupWebSocket();
+    
+    // Set up a periodic fetch to ensure data consistency even if WebSocket updates fail
+    const intervalId = setInterval(() => {
+      if (selectedTeacher) {
+        console.log('Performing periodic refresh');
+        fetchAllSlots(selectedTeacher.user_id);
+        if (selectedDate) {
+          fetchAvailableSlots(selectedTeacher.user_id, selectedDate);
+        }
+      }
+    }, 30000); // Refresh every 30 seconds
+    
+    return () => {
+      // Properly close WebSocket connection
+      if (websocket) {
+        websocket.close();
+      }
+      clearInterval(intervalId);
+    };
   }, [userData.user_id]);
 
   useEffect(() => {
@@ -105,11 +174,43 @@ const StudentBooking = ({ route, navigation }) => {
     fetchBookedClasses();
   }, [userData]);
 
+  // Add a new effect to fetch slots for all teachers when component loads
+  useEffect(() => {
+    const fetchAllTeacherSlots = async () => {
+      try {
+        console.log('Fetching all teachers slots for initial load');
+        const timestamp = new Date().getTime();
+        const response = await fetch(
+          `https://3cc0-146-196-34-220.ngrok-free.app/api/booking/get-all-teacher-slots/?t=${timestamp}`,
+          {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+            },
+          }
+        );
+        
+        if (!response.ok) {
+          throw new Error(`Server responded with status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('Fetched all teachers slots successfully. Count:', data.length);
+      } catch (error) {
+        console.error('Failed to fetch all teachers slots:', error.message);
+      }
+    };
+    
+    // Call the function to fetch all slots
+    fetchAllTeacherSlots();
+  }, []);
+
   // Fetch all teachers
   const fetchTeachers = async () => {
     try {
       const response = await fetch(
-        'https://a195-110-235-239-151.ngrok-free.app/api/teacher/list-teachers/',
+        'https://3cc0-146-196-34-220.ngrok-free.app/api/teacher/list-teachers/',
         {
           method: 'GET',
           headers: {
@@ -128,70 +229,188 @@ const StudentBooking = ({ route, navigation }) => {
   // Fetch all future slots for the selected teacher
   const fetchAllSlots = async (teacherId) => {
     try {
+      console.log('Fetching all slots for teacher:', teacherId);
+      
+      // First, try with a direct API call - helpful for debugging
+      const directApiCall = async () => {
+        try {
+          console.log('Making direct API call to fetch all slots');
+          const response = await fetch(
+            `https://3cc0-146-196-34-220.ngrok-free.app/api/booking/get-all-slots-for-teacher/${teacherId}/`,
+            {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+              },
+            }
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log('Direct API call result - slots count:', data.length);
+          }
+        } catch (err) {
+          console.log('Direct API call failed, continuing with regular flow:', err.message);
+        }
+      };
+      
+      // Make the direct call first, but don't wait for it - just for debugging
+      directApiCall();
+      
+      // Add timestamp and random number to prevent caching
+      const timestamp = new Date().getTime();
+      const randomParam = Math.floor(Math.random() * 100000);
       const response = await fetch(
-        'https://a195-110-235-239-151.ngrok-free.app/api/booking/get-teacher-slots/',
+        `https://3cc0-146-196-34-220.ngrok-free.app/api/booking/get-teacher-slots/?t=${timestamp}&r=${randomParam}`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
           },
           body: JSON.stringify({
             teacher_id: teacherId,
+            limit: 500, // Increased limit to ensure ALL slots are fetched
+            include_all: true // Ask server to include ALL slots
           }),
         }
       );
+      
+      if (!response.ok) {
+        throw new Error(`Server responded with status: ${response.status}`);
+      }
+      
       const data = await response.json();
       if (data.error) {
         console.error('Error fetching all slots:', data.error);
         setAllSlots([]);
         Alert.alert('Error', data.error);
       } else {
-        console.log('All slots:', data); // Debug log
-        setAllSlots(data.filter(slot => !slot.is_booked));
+        console.log('All slots count from API:', data.length);
+        
+        // Log first few slots for debugging
+        if (data.length > 0) {
+          console.log('First 3 slots sample:', data.slice(0, 3));
+        }
+        
+        // Only keep future slots
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        
+        // Sort slots for better display
+        const sortedSlots = [...data]
+          .filter(slot => {
+            // Keep only non-booked slots in the future
+            const slotDate = new Date(slot.date);
+            return !slot.is_booked && slotDate >= now;
+          })
+          .sort((a, b) => {
+            // First compare by date
+            const dateComparison = new Date(a.date) - new Date(b.date);
+            if (dateComparison !== 0) return dateComparison;
+            
+            // If same date, compare by start time
+            return a.start_time.localeCompare(b.start_time);
+          });
+        
+        console.log('Available slots total after filtering:', sortedSlots.length);
+        
+        // Log the dates of all available slots for debugging
+        const availableDates = [...new Set(sortedSlots.map(slot => slot.date))];
+        console.log('Available dates:', availableDates);
+        
+        setAllSlots(sortedSlots);
       }
     } catch (error) {
-      console.error('Error fetching all slots:', error);
+      console.error('Error fetching all slots:', error.message);
       setAllSlots([]);
-      Alert.alert('Error', 'Failed to fetch teacher slots');
+      Alert.alert('Error', 'Failed to fetch teacher slots: ' + error.message);
     }
   };
 
   // Fetch available slots for a specific date
   const fetchAvailableSlots = async (teacherId, date) => {
     try {
+      const dateStr = date.toISOString().split('T')[0];
+      console.log('Fetching available slots for date:', dateStr);
+      
+      // Add timestamp to prevent caching
+      const timestamp = new Date().getTime();
       const response = await fetch(
-        'https://a195-110-235-239-151.ngrok-free.app/api/booking/get-teacher-slots/',
+        `https://3cc0-146-196-34-220.ngrok-free.app/api/booking/get-teacher-slots/?t=${timestamp}`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
           },
           body: JSON.stringify({
             teacher_id: teacherId,
-            date: date.toISOString().split('T')[0],
+            date: dateStr,
+            limit: 500 // Increased limit to ensure ALL slots are fetched
           }),
         }
       );
+      
+      if (!response.ok) {
+        throw new Error(`Server responded with status: ${response.status}`);
+      }
+      
       const data = await response.json();
       if (data.error) {
         console.error('Error fetching available slots:', data.error);
         setAvailableSlots([]);
         Alert.alert('Error', data.error);
       } else {
-        console.log('Available slots for date:', data); // Debug log
-        setAvailableSlots(data.filter(slot => !slot.is_booked));
+        console.log('Slots received for date:', dateStr, data.length);
+        
+        // Log all slots for debugging
+        if (data.length > 0) {
+          console.log('All slots for this date:', data);
+        }
+        
+        // Filter for available slots and sort
+        const availableSlots = data
+          .filter(slot => !slot.is_booked)
+          .sort((a, b) => a.start_time.localeCompare(b.start_time));
+        
+        console.log('Filtered available slots for date:', availableSlots.length);
+        
+        if (availableSlots.length === 0 && data.length > 0) {
+          console.log('Warning: All slots for this date are booked');
+        }
+        
+        setAvailableSlots(availableSlots);
+        
+        // As a fallback, also check allSlots for the selected date
+        if (availableSlots.length === 0) {
+          console.log('Checking allSlots as fallback...');
+          const fallbackSlots = allSlots.filter(slot => 
+            slot.date === dateStr && !slot.is_booked
+          );
+          
+          if (fallbackSlots.length > 0) {
+            console.log('Found', fallbackSlots.length, 'slots in allSlots, using those');
+            setAvailableSlots(fallbackSlots);
+          }
+        }
       }
     } catch (error) {
-      console.error('Error fetching available slots:', error);
+      console.error('Error fetching available slots:', error.message);
       setAvailableSlots([]);
-      Alert.alert('Error', 'Failed to fetch available slots');
+      Alert.alert('Error', 'Failed to fetch available slots: ' + error.message);
     }
   };
 
   const fetchBookedClasses = async () => {
     try {
       const response = await fetch(
-        'https://a195-110-235-239-151.ngrok-free.app/api/booking/get-student-bookings/',
+        'https://3cc0-146-196-34-220.ngrok-free.app/api/booking/get-student-bookings/',
         {
           method: 'POST',
           headers: {
@@ -209,6 +428,12 @@ const StudentBooking = ({ route, navigation }) => {
   };
 
   const handleBookSlot = (slot) => {
+    // Prevent multiple bookings simultaneously
+    if (bookingSlotId) {
+      Alert.alert('Please wait', 'A booking is already in progress.');
+      return;
+    }
+    
     Alert.alert(
       'Confirm Booking',
       `Book slot on ${slot.date} from ${slot.start_time} to ${slot.end_time}?`,
@@ -218,12 +443,46 @@ const StudentBooking = ({ route, navigation }) => {
           text: 'Confirm',
           onPress: () => {
             if (ws) {
-              setBookingSlotId(slot.id);
-              ws.send(JSON.stringify({
-                action: 'book_slot',
-                slot_id: slot.id,
-                student_id: userData.user_id,
-              }));
+              try {
+                console.log('Booking slot:', slot.id);
+                
+                // Set booking status and optimistically update UI
+                setBookingSlotId(slot.id);
+                
+                // Optimistically remove the slot from available slots
+                setAvailableSlots(prevSlots => prevSlots.filter(s => s.id !== slot.id));
+                setAllSlots(prevSlots => prevSlots.filter(s => s.id !== slot.id));
+                
+                // Send the booking request
+                ws.send(JSON.stringify({
+                  action: 'book_slot',
+                  slot_id: slot.id,
+                  student_id: userData.user_id,
+                }));
+                
+                // Set a timeout to clear booking state if no response
+                setTimeout(() => {
+                  if (bookingSlotId === slot.id) {
+                    console.log('Booking timeout, resetting state');
+                    setBookingSlotId(null);
+                    
+                    // Refetch to ensure UI is in sync with server
+                    fetchBookedClasses();
+                    if (selectedTeacher) {
+                      fetchAllSlots(selectedTeacher.user_id);
+                      if (selectedDate) {
+                        fetchAvailableSlots(selectedTeacher.user_id, selectedDate);
+                      }
+                    }
+                  }
+                }, 10000); // 10 second timeout
+              } catch (error) {
+                console.error('Error sending booking request:', error);
+                setBookingSlotId(null);
+                Alert.alert('Error', 'Failed to send booking request. Please try again.');
+              }
+            } else {
+              Alert.alert('Error', 'Connection not available. Please try again later.');
             }
           },
         },
@@ -241,6 +500,30 @@ const StudentBooking = ({ route, navigation }) => {
     const hasAvailableSlots = (day) => {
       const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       return allSlots.some(slot => slot.date === dateStr);
+    };
+    
+    // Function to count available slots for a day
+    const countAvailableSlots = (day) => {
+      const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      return allSlots.filter(slot => slot.date === dateStr).length;
+    };
+    
+    // Check if a date is in the past
+    const isPastDate = (day) => {
+      const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return date < today;
+    };
+    
+    // Check if a date is selected
+    const isSelectedDate = (day) => {
+      if (!selectedDate) return false;
+      return (
+        selectedDate.getFullYear() === currentDate.getFullYear() &&
+        selectedDate.getMonth() === currentDate.getMonth() &&
+        selectedDate.getDate() === day
+      );
     };
 
     return (
@@ -271,24 +554,50 @@ const StudentBooking = ({ route, navigation }) => {
           {emptyDays.map((_, index) => (
             <View key={`empty-${index}`} style={styles.calendarDate}></View>
           ))}
-          {days.map((day) => (
-            <TouchableOpacity
-              key={day}
-              style={[
-                styles.calendarDate,
-                hasAvailableSlots(day) && styles.availableDate,
-              ]}
-              onPress={() => {
-                const selected = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-                setSelectedDate(selected);
-                if (selectedTeacher) {
-                  fetchAvailableSlots(selectedTeacher.user_id, selected);
-                }
-              }}
-            >
-              <Text>{day}</Text>
-            </TouchableOpacity>
-          ))}
+          {days.map((day) => {
+            const hasSlots = hasAvailableSlots(day);
+            const isSelected = isSelectedDate(day);
+            const isPast = isPastDate(day);
+            const slotCount = hasSlots ? countAvailableSlots(day) : 0;
+            
+            return (
+              <TouchableOpacity
+                key={day}
+                style={[
+                  styles.calendarDate,
+                  hasSlots && styles.availableDate,
+                  isSelected && styles.selectedDate,
+                  isPast && styles.pastDate,
+                ]}
+                onPress={() => {
+                  if (isPast) {
+                    Alert.alert('Notice', 'Cannot select dates in the past');
+                    return;
+                  }
+                  
+                  const selected = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+                  setSelectedDate(selected);
+                  if (selectedTeacher) {
+                    fetchAvailableSlots(selectedTeacher.user_id, selected);
+                  }
+                }}
+                disabled={isPast}
+              >
+                <Text style={[
+                  { textAlign: 'center' },
+                  isPast && styles.pastDateText,
+                  isSelected && styles.selectedDateText
+                ]}>
+                  {day}
+                </Text>
+                {hasSlots && (
+                  <View style={styles.slotCountBadge}>
+                    <Text style={styles.slotCountText}>{slotCount}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
         </View>
       </View>
     );
@@ -303,7 +612,7 @@ const StudentBooking = ({ route, navigation }) => {
       
       // Create order on backend
       const response = await fetch(
-        'https://a195-110-235-239-151.ngrok-free.app/api/payment/create-order/',
+        'https://3cc0-146-196-34-220.ngrok-free.app/api/payment/create-order/',
         {
           method: 'POST',
           headers: {
@@ -360,7 +669,7 @@ const StudentBooking = ({ route, navigation }) => {
       if (data.razorpay_payment_id) {
         // Payment successful, verify with backend
         const response = await fetch(
-          'https://a195-110-235-239-151.ngrok-free.app/api/payment/verify-payment/',
+          'https://3cc0-146-196-34-220.ngrok-free.app/api/payment/verify-payment/',
           {
             method: 'POST',
             headers: {
@@ -485,17 +794,26 @@ const StudentBooking = ({ route, navigation }) => {
         )}
       </View>
       
-      {!booking.payment_status && (
+      <View style={styles.buttonContainer}>
+        {!booking.payment_status && (
+          <TouchableOpacity 
+            style={[styles.payButton, processingPaymentId === booking.id && styles.disabledButton]}
+            onPress={() => handlePayment(booking)}
+            disabled={processingPayment}
+          >
+            <Text style={styles.buttonText}>
+              {processingPaymentId === booking.id ? 'Processing...' : 'Pay Now'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        
         <TouchableOpacity 
-          style={[styles.payButton, processingPaymentId === booking.id && styles.disabledButton]}
-          onPress={() => handlePayment(booking)}
-          disabled={processingPayment}
+          style={styles.startClassButton}
+          onPress={() => setShowMeeting(true)}
         >
-          <Text style={styles.buttonText}>
-            {processingPaymentId === booking.id ? 'Processing...' : 'Pay Now'}
-          </Text>
+          <Text style={styles.buttonText}>Start Class</Text>
         </TouchableOpacity>
-      )}
+      </View>
     </View>
   );
 
@@ -563,13 +881,19 @@ const StudentBooking = ({ route, navigation }) => {
               style={styles.section}
               entering={FadeInUp.delay(400).duration(500)}
             >
-              <Text style={styles.sectionTitle}>Available Slots</Text>
+              <Text style={styles.sectionTitle}>
+                Available Slots
+                {selectedTeacher && <Text style={styles.infoText}> ({availableSlots.length})</Text>}
+              </Text>
               {!selectedTeacher ? (
                 <Text style={styles.emptyText}>Please select a teacher to view available slots.</Text>
               ) : !selectedDate ? (
                 <Text style={styles.emptyText}>Please select a date to view available slots.</Text>
               ) : availableSlots.length === 0 ? (
-                <Text style={styles.emptyText}>No available slots for this date.</Text>
+                <View>
+                  <Text style={styles.emptyText}>No available slots for this date.</Text>
+                  <Text style={styles.hintText}>Try selecting another date highlighted on the calendar.</Text>
+                </View>
               ) : (
                 <FlatList
                   data={availableSlots}
@@ -589,7 +913,10 @@ const StudentBooking = ({ route, navigation }) => {
                   )}
                   keyExtractor={(item) => item.id.toString()}
                   nestedScrollEnabled={true}
-                  style={styles.flatListContainer}
+                  style={[
+                    styles.flatListContainer, 
+                    { maxHeight: Math.min(availableSlots.length * 80 + 20, 250) }
+                  ]}
                 />
               )}
             </Animated.View>
@@ -641,6 +968,28 @@ const StudentBooking = ({ route, navigation }) => {
               <Text style={styles.closeButtonText}>Cancel</Text>
             </TouchableOpacity>
           </View>
+        </Modal>
+      )}
+
+      {/* Video Meeting Modal */}
+      {showMeeting && (
+        <Modal
+          visible={showMeeting}
+          animationType="slide"
+          transparent={false}
+          onRequestClose={() => {
+            setShowMeeting(false);
+          }}
+        >
+          <SafeAreaView style={{ flex: 1 }}>
+            <WebView
+              source={{ uri: meetingURL }}
+              javaScriptEnabled
+              domStorageEnabled
+              allowsFullscreenVideo
+              startInLoadingState
+            />
+          </SafeAreaView>
         </Modal>
       )}
     </View>
@@ -809,44 +1158,75 @@ const styles = StyleSheet.create({
   availableDate: { 
     backgroundColor: 'rgba(147, 51, 234, 0.3)' 
   },
+  selectedDate: {
+    backgroundColor: 'rgba(147, 51, 234, 0.5)',
+  },
+  pastDate: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  pastDateText: {
+    color: 'rgba(255, 255, 255, 0.5)',
+  },
+  selectedDateText: {
+    color: 'rgba(255, 255, 255, 0.8)',
+  },
+  slotCountBadge: {
+    backgroundColor: 'rgba(147, 51, 234, 0.8)',
+    borderRadius: 12,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    position: 'absolute',
+    top: 4,
+    right: 4,
+  },
+  slotCountText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
   flatListContainer: {
     maxHeight: 250,
   },
-  payButton: {
-    backgroundColor: '#34C759',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    marginTop: 10,
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
     alignItems: 'center',
-    minWidth: 100,
-    alignSelf: 'flex-end',
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    flexWrap: 'wrap',
+    gap: 8,
   },
-  closeButton: {
-    position: 'absolute',
-    top: 40,
-    right: 20,
-    backgroundColor: '#FF3B30',
-    padding: 10,
+  payButton: {
+    backgroundColor: '#3B82F6',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  closeButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: 'bold',
+  startClassButton: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 16,
     fontWeight: 'bold',
+    fontSize: 14,
+  },
+  closeButton: {
+    backgroundColor: '#EF4444',
+    padding: 12,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
   statusConfirmed: {
     color: '#34C759',
@@ -856,6 +1236,25 @@ const styles = StyleSheet.create({
   },
   statusPending: {
     color: '#FFCC00',
+  },
+  refreshButton: {
+    backgroundColor: '#3B82F6',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  refreshButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  infoText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 12,
+  },
+  hintText: {
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontSize: 12,
   },
 });
 

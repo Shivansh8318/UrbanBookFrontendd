@@ -49,7 +49,7 @@ const CompleteProfileScreen = () => {
 
     try {
       const response = await fetch(
-        `https://a195-110-235-239-151.ngrok-free.app/api/${isStudent ? 'student' : 'teacher'}/update-profile/`,
+        `https://3cc0-146-196-34-220.ngrok-free.app/api/${isStudent ? 'student' : 'teacher'}/update-profile/`,
         {
           method: 'POST',
           headers: {
